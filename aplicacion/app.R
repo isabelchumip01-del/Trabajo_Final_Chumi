@@ -22,8 +22,6 @@ library(stringr)
 
 # 2. DESCARGA Y PREPARACIÓN DE DATOS --------------------------
 
-# 2.1. Direcciones de los archivos en GitHub
-
 url_datos <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Final_Chumi/main/Datos_Limpios_Machangara.csv"
 
 url_cuenca <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Final_Chumi/main/cuenca_machangara.gpkg"
@@ -31,7 +29,7 @@ url_cuenca <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Fina
 url_parroquias <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Final_Chumi/main/parroquias_cuenca.gpkg"
 
 
-# 2.2. Lectura de la matriz de encuestas
+# 2.1. Lectura de la matriz de encuestas
 
 Datos <- read_csv(
   url_datos,
@@ -39,7 +37,7 @@ Datos <- read_csv(
 )
 
 
-# 2.3. Descarga de las capas geográficas
+# 2.2. Descarga de las capas geográficas
 
 archivo_cuenca <- tempfile(fileext = ".gpkg")
 archivo_parroquias <- tempfile(fileext = ".gpkg")
@@ -59,7 +57,7 @@ download.file(
 )
 
 
-# 2.4. Lectura de las capas espaciales
+# 2.3. Lectura de las capas espaciales
 
 Cuenca <- st_read(
   archivo_cuenca,
@@ -72,19 +70,19 @@ Parroquias <- st_read(
 )
 
 
-# 2.5. Transformación a WGS84 para Leaflet
+# 2.4. Transformación a WGS84 para Leaflet
 
 Cuenca <- st_transform(Cuenca, 4326)
 Parroquias <- st_transform(Parroquias, 4326)
 
 
-# 2.6. Selección de las mujeres encuestadas
+# 2.5. Selección de las mujeres encuestadas
 
 Mujeres <- Datos |>
   filter(Sexo == "Femenino")
 
 
-# 2.7. Creación de la capa espacial de encuestas
+# 2.6. Creación de la capa espacial de encuestas
 
 Encuestas_sf <- st_as_sf(
   Datos,
@@ -99,7 +97,7 @@ Encuestas_sf <- st_transform(
 )
 
 
-# 2.8. Identificación de las tomas de agua
+# 2.7. Identificación de las tomas de agua
 
 Tomas_sf <- Datos |>
   distinct(
@@ -119,76 +117,64 @@ Tomas_sf <- st_transform(
 )
 
 
-# 2.9. Función para ordenar las tomas de forma natural
+# 2.8. FUNCIÓN PARA ORDENAR LAS TOMAS DE AGUA
+# Orden natural: 1, 2, 3, 4A, 4B, 5, 6, 7, 8A...
+# También conserva nombres compuestos como "2 Y 3".
 
 ordenar_tomas <- function(x) {
   
-  x <- unique(as.character(x))
+  x <- unique(
+    na.omit(
+      str_trim(as.character(x))
+    )
+  )
   
-  x <- x[
-    !is.na(x) &
-      trimws(x) != ""
-  ]
+  x <- x[x != ""]
   
-  # Extraer el componente numérico de cada toma
+  partes <- str_match(
+    x,
+    "^\\s*(\\d+)\\s*(.*)$"
+  )
   
   numero <- suppressWarnings(
-    as.numeric(
-      str_extract(x, "\\d+")
-    )
+    as.numeric(partes[, 2])
   )
-  
-  # Extraer las letras o sufijos de cada toma
   
   sufijo <- str_to_upper(
-    str_trim(
-      str_remove(x, "\\d+")
-    )
+    str_squish(partes[, 3])
   )
   
-  # Ordenar primero por número y después por letra
+  orden <- order(
+    is.na(numero),
+    numero,
+    sufijo,
+    str_to_upper(x),
+    na.last = TRUE
+  )
   
-  x[
-    order(
-      is.na(numero),
-      numero,
-      sufijo,
-      x,
-      na.last = TRUE
-    )
-  ]
+  x[orden]
 }
 
 
-# 2.10. Opciones de los filtros
+# 2.9. Opciones de los filtros
 
 opciones_tomas <- ordenar_tomas(Datos$Toma)
 
 opciones_edad <- sort(
-  unique(
-    as.character(
-      na.omit(Mujeres$Edad)
-    )
-  )
+  unique(as.character(na.omit(Mujeres$Edad)))
 )
 
 opciones_educacion <- sort(
-  unique(
-    as.character(
-      na.omit(Mujeres$Educación)
-    )
-  )
+  unique(as.character(na.omit(Mujeres$Educación)))
 )
 
 
-# 2.11. Funciones auxiliares
+# 2.10. Funciones auxiliares
 
 es_si <- function(x) {
   
   !is.na(x) &
-    str_to_lower(
-      str_trim(as.character(x))
-    ) %in%
+    str_to_lower(str_trim(as.character(x))) %in%
     c("sí", "si", "1", "verdadero", "true")
   
 }
@@ -196,9 +182,59 @@ es_si <- function(x) {
 
 # 3. INTERFAZ DE LA APLICACIÓN -------------------------------
 
-ui <- page_fluid(
+ui <- page_sidebar(
   
   title = "Mujeres y gobernanza del agua",
+  
+  sidebar = sidebar(
+    title = "Acerca de la aplicación",
+    
+    p(
+      "Esta aplicación explora la participación de las mujeres ",
+      "en la Junta de Riego y Drenaje Machángara."
+    ),
+    
+    p(
+      "Utilice el selector de toma de agua de la primera sección ",
+      "para actualizar el mapa, los indicadores, el gráfico por ",
+      "toma, el gráfico por edad y la tabla."
+    ),
+    
+    p(
+      "Los filtros de edad y nivel educativo de la última sección ",
+      "se aplican únicamente al gráfico de factores limitantes."
+    ),
+    
+    hr(),
+    
+    h5("Procedencia de los datos"),
+    
+    p(
+      "La información utilizada en esta aplicación procede de ",
+      "la matriz de encuestas aplicada a usuarios y usuarias de ",
+      "la Junta de Riego y Drenaje Machángara y de las capas ",
+      "geográficas utilizadas para representar el territorio."
+    ),
+    
+    p(
+      strong("Matriz de encuestas: "),
+      "base de datos depurada de la encuesta."
+    ),
+    
+    p(
+      strong("Información espacial: "),
+      "capas geográficas de la cuenca del río Machángara ",
+      "y de las parroquias incluidas en el área de estudio."
+    ),
+    
+    p(
+      a(
+        "Consultar los datos y archivos geográficos en GitHub",
+        href = "https://github.com/isabelchumip01-del/Trabajo_Final_Chumi",
+        target = "_blank"
+      )
+    )
+  ),
   
   theme = bs_theme(
     version = 5,
@@ -206,11 +242,25 @@ ui <- page_fluid(
   ),
   
   tags$head(
-    
     tags$style(HTML("
 
       body {
         background-color: #F7F9FA;
+      }
+
+      .seccion-row {
+        margin-bottom: 1.25rem;
+      }
+
+      .seccion-row > [class*='col-'] {
+        display: flex;
+        min-width: 0;
+        margin-bottom: 1rem;
+      }
+
+      .seccion-row .card {
+        width: 100%;
+        min-width: 0;
       }
 
       .panel-superior {
@@ -225,6 +275,7 @@ ui <- page_fluid(
         display: flex;
         flex-direction: column;
         gap: 10px;
+        width: 100%;
       }
 
       .indicadores-columna .bslib-value-box {
@@ -232,274 +283,315 @@ ui <- page_fluid(
       }
 
       .grafico-principal {
-        min-height: 390px;
+        min-height: 500px;
+        margin-bottom: 1.25rem;
       }
 
       .grafico-secundario {
-        min-height: 390px;
+        min-height: 440px;
       }
 
-      .fila-analisis {
-        display: grid;
-        grid-template-columns: 25fr 75fr;
-        gap: 1rem;
-        align-items: stretch;
+      .tabla-resumen {
+        min-height: 440px;
       }
 
-      .fila-analisis > * {
-        min-width: 0;
+      .filtros-card {
+        min-height: 440px;
       }
 
-      @media (max-width: 900px) {
+      .factores-card {
+        min-height: 440px;
+      }
 
-        .fila-analisis {
-          grid-template-columns: 1fr;
+      .plotly,
+      .leaflet,
+      .dataTables_wrapper {
+        max-width: 100%;
+      }
+
+      @media (max-width: 991px) {
+
+        .panel-superior,
+        .grafico-principal,
+        .grafico-secundario,
+        .tabla-resumen,
+        .filtros-card,
+        .factores-card {
+          min-height: auto;
         }
 
-        .panel-superior {
-          min-height: auto;
+        .seccion-row > [class*='col-'] {
+          margin-bottom: 1rem;
         }
 
       }
 
     "))
-    
   ),
   
   
-  # ----------------------------------------------------------
+  # ==========================================================
   # SECCIÓN 1. FILTRO DE TOMAS, MAPA E INDICADORES
-  # ----------------------------------------------------------
-  
-  layout_columns(
-    
-    col_widths = c(3, 6, 3),
-    
-    gap = "1rem",
-    
-    
-    # FILTRO DE TOMAS
-    
-    card(
-      
-      class = "panel-superior",
-      
-      card_header(
-        "Distribución espacial de las tomas de agua"
-      ),
-      
-      card_body(
-        
-        selectInput(
-          inputId = "toma",
-          label = "Seleccione una toma de agua:",
-          choices = c(
-            "Todas las tomas" = "__TODAS__",
-            setNames(opciones_tomas, opciones_tomas)
-          ),
-          selected = "__TODAS__"
-        ),
-        
-        hr(),
-        
-        uiOutput("nombre_toma")
-        
-      )
-      
-    ),
-    
-    
-    # MAPA
-    
-    card(
-      
-      class = "panel-superior panel-mapa",
-      
-      card_header(
-        "Ubicación espacial de las tomas"
-      ),
-      
-      leafletOutput(
-        "mapa_tomas",
-        height = "520px",
-        width = "100%"
-      )
-      
-    ),
-    
-    
-    # INDICADORES
-    
-    uiOutput("indicadores")
-    
-  ),
-  
-  
-  # ----------------------------------------------------------
-  # SECCIÓN 2. PARTICIPACIÓN EN DIRECTIVAS
-  # ----------------------------------------------------------
-  
-  layout_columns(
-    
-    col_widths = c(6, 6),
-    
-    gap = "1rem",
-    
-    
-    # PARTICIPACIÓN POR TOMA
-    
-    card(
-      
-      class = "grafico-principal",
-      
-      full_screen = TRUE,
-      
-      card_header(
-        "Participación de las mujeres en directivas por toma"
-      ),
-      
-      plotlyOutput(
-        "grafico_cargos",
-        height = "350px"
-      )
-      
-    ),
-    
-    
-    # PARTICIPACIÓN SEGÚN GRUPO DE EDAD
-    
-    card(
-      
-      class = "grafico-principal",
-      
-      full_screen = TRUE,
-      
-      card_header(
-        "Participación de las mujeres en directivas según grupo de edad"
-      ),
-      
-      plotlyOutput(
-        "grafico_edad",
-        height = "350px"
-      )
-      
-    )
-    
-  ),
-  
-  
-  # ----------------------------------------------------------
-  # SECCIÓN 3. ANÁLISIS DE FACTORES
-  # FILTROS INDEPENDIENTES DEL MAPA Y LAS TOMAS
-  # ----------------------------------------------------------
+  # ==========================================================
   
   div(
+    class = "seccion-row",
     
-    class = "fila-analisis",
-    
-    
-    # FILTROS DE ANÁLISIS
-    
-    card(
+    fluidRow(
       
-      class = "filtros-analisis",
-      
-      card_header(
-        "Filtros de análisis"
-      ),
-      
-      card_body(
+      column(
+        width = 3,
         
-        p(
-          "Explore la relación entre la edad, el nivel educativo y los factores que limitan la participación de las mujeres."
-        ),
-        
-        selectInput(
-          inputId = "edad_analisis",
-          label = "Grupo de edad:",
-          choices = c(
-            "Todas las edades",
-            opciones_edad
+        card(
+          class = "panel-superior",
+          
+          card_header(
+            "Distribución espacial de las tomas de agua"
           ),
-          selected = "Todas las edades"
-        ),
-        
-        hr(),
-        
-        selectInput(
-          inputId = "educacion_analisis",
-          label = "Nivel educativo:",
-          choices = c(
-            "Todos los niveles",
-            opciones_educacion
-          ),
-          selected = "Todos los niveles"
+          
+          card_body(
+            
+            selectInput(
+              inputId = "toma",
+              label = "Seleccione una toma de agua:",
+              
+              choices = c(
+                "Todas las tomas" = "__TODAS__",
+                setNames(opciones_tomas, opciones_tomas)
+              ),
+              
+              selected = "__TODAS__",
+              width = "100%"
+            ),
+            
+            hr(),
+            
+            uiOutput("nombre_toma")
+            
+          )
         )
-        
-      )
-      
-    ),
-    
-    
-    # FACTORES LIMITANTES
-    
-    card(
-      
-      class = "grafico-analisis",
-      
-      full_screen = TRUE,
-      
-      card_header(
-        "Factores que limitan la participación de las mujeres"
       ),
       
-      plotlyOutput(
-        "grafico_factores",
-        height = "440px"
+      
+      column(
+        width = 6,
+        
+        card(
+          class = "panel-superior panel-mapa",
+          
+          card_header(
+            "Ubicación espacial de las tomas"
+          ),
+          
+          leafletOutput(
+            "mapa_tomas",
+            height = "520px",
+            width = "100%"
+          )
+        )
+      ),
+      
+      
+      column(
+        width = 3,
+        
+        uiOutput("indicadores")
+        
       )
       
     )
-    
   ),
   
   
-  # ----------------------------------------------------------
-  # SECCIÓN 4. TABLA RESUMEN
-  # ----------------------------------------------------------
+  # ==========================================================
+  # SECCIÓN 2. PARTICIPACIÓN EN DIRECTIVAS POR TOMA
+  # ==========================================================
   
   card(
-    
-    full_screen = TRUE,
+    class = "grafico-principal",
     
     card_header(
-      "Resumen de participación de las mujeres por toma de agua"
+      "Participación de las mujeres en directivas por toma"
     ),
     
-    DTOutput("tabla_resumen")
-    
+    plotlyOutput(
+      "grafico_cargos",
+      height = "430px",
+      width = "100%"
+    )
   ),
   
   
-  # ----------------------------------------------------------
-  # FUENTES DE INFORMACIÓN
-  # ----------------------------------------------------------
+  # ==========================================================
+  # SECCIÓN 3. PARTICIPACIÓN SEGÚN EDAD Y TABLA
+  # ==========================================================
+  
+  div(
+    class = "seccion-row",
+    
+    fluidRow(
+      
+      column(
+        width = 6,
+        
+        card(
+          class = "grafico-secundario",
+          
+          card_header(
+            "Participación de las mujeres en directivas según grupo de edad"
+          ),
+          
+          plotlyOutput(
+            "grafico_edad",
+            height = "390px",
+            width = "100%"
+          )
+        )
+      ),
+      
+      
+      column(
+        width = 6,
+        
+        card(
+          class = "tabla-resumen",
+          
+          card_header(
+            "Resumen de participación de las mujeres por toma de agua"
+          ),
+          
+          DTOutput(
+            "tabla_resumen",
+            width = "100%"
+          )
+        )
+      )
+      
+    )
+  ),
+  
+  
+  # ==========================================================
+  # SECCIÓN 4. FACTORES QUE LIMITAN LA PARTICIPACIÓN
+  # ==========================================================
+  
+  div(
+    class = "seccion-row",
+    
+    fluidRow(
+      
+      column(
+        width = 3,
+        
+        card(
+          class = "filtros-card",
+          
+          card_header(
+            "Filtros de análisis"
+          ),
+          
+          card_body(
+            
+            p(
+              "Explore los factores que limitan la participación ",
+              "de las mujeres según la edad y el nivel educativo."
+            ),
+            
+            selectInput(
+              inputId = "edad_analisis",
+              label = "Grupo de edad:",
+              
+              choices = c(
+                "Todas las edades",
+                opciones_edad
+              ),
+              
+              selected = "Todas las edades",
+              width = "100%"
+            ),
+            
+            hr(),
+            
+            selectInput(
+              inputId = "educacion_analisis",
+              label = "Nivel educativo:",
+              
+              choices = c(
+                "Todos los niveles",
+                opciones_educacion
+              ),
+              
+              selected = "Todos los niveles",
+              width = "100%"
+            )
+            
+          )
+        )
+      ),
+      
+      
+      column(
+        width = 9,
+        
+        card(
+          class = "factores-card",
+          
+          card_header(
+            "Factores que limitan la participación de las mujeres"
+          ),
+          
+          plotlyOutput(
+            "grafico_factores",
+            height = "400px",
+            width = "100%"
+          )
+        )
+      )
+      
+    )
+  ),
+  
+  
+  # ==========================================================
+  # PROCEDENCIA DE LOS DATOS
+  # ==========================================================
   
   card(
     
     card_header(
-      "Fuente de información"
+      "Fuentes y procedencia de la información"
     ),
+    
+    h6("1. Matriz de encuestas"),
     
     p(
-      "Elaboración propia con base en la encuesta aplicada a usuarios y usuarias de la Junta de Riego y Drenaje Machángara."
+      "Elaboración propia con base en la encuesta aplicada a ",
+      "usuarios y usuarias de la Junta de Riego y Drenaje ",
+      "Machángara. Para los análisis de participación femenina ",
+      "se consideran las respuestas de las mujeres encuestadas."
     ),
+    
+    h6("2. Información geográfica"),
+    
+    p(
+      "Capas geográficas de la cuenca del río Machángara ",
+      "y de las parroquias utilizadas para la representación ",
+      "espacial del área de estudio."
+    ),
+    
+    h6("3. Repositorio de datos"),
     
     p(
       a(
-        "Consultar repositorio de datos en GitHub",
+        "Consultar matriz de encuestas y archivos geográficos en GitHub",
         href = "https://github.com/isabelchumip01-del/Trabajo_Final_Chumi",
         target = "_blank"
       )
+    ),
+    
+    p(
+      class = "text-muted",
+      "Elaboración propia."
     )
     
   )
@@ -533,8 +625,6 @@ server <- function(input, output, session) {
     
     resultado <- Mujeres
     
-    # Filtro por edad
-    
     if (
       !is.null(input$edad_analisis) &&
       input$edad_analisis != "Todas las edades"
@@ -546,9 +636,6 @@ server <- function(input, output, session) {
         )
       
     }
-    
-    
-    # Filtro por nivel educativo
     
     if (
       !is.null(input$educacion_analisis) &&
@@ -596,9 +683,7 @@ server <- function(input, output, session) {
   Resumen_tomas <- reactive({
     
     Mujeres |>
-      
       mutate(
-        
         Toma = as.character(Toma),
         
         Tiene_directiva = es_si(Directiva),
@@ -609,58 +694,16 @@ server <- function(input, output, session) {
           NA_character_,
           trimws(as.character(Cargo_que_ocupa))
         )
-        
       ) |>
-      
       group_by(Toma) |>
-      
       summarise(
         
-        # Número de mujeres encuestadas por toma
-        
         Mujeres_encuestadas = n(),
-        
-        
-        # Número de mujeres que pertenecen a directivas
         
         Mujeres_en_directivas = sum(
           Tiene_directiva,
           na.rm = TRUE
         ),
-        
-        
-        # Categorías de edad registradas por toma
-        
-        Edad = {
-          
-          edades <- unique(
-            trimws(
-              as.character(
-                Edad[
-                  !is.na(Edad) &
-                    trimws(as.character(Edad)) != ""
-                ]
-              )
-            )
-          )
-          
-          if (length(edades) == 0) {
-            
-            "Sin dato"
-            
-          } else {
-            
-            paste(
-              sort(edades),
-              collapse = "; "
-            )
-            
-          }
-          
-        },
-        
-        
-        # Cargos reportados por las mujeres en directivas
         
         Cargo_que_ocupa = {
           
@@ -677,10 +720,7 @@ server <- function(input, output, session) {
             
           } else {
             
-            paste(
-              sort(cargos),
-              collapse = "; "
-            )
+            paste(sort(cargos), collapse = "; ")
             
           }
           
@@ -689,12 +729,11 @@ server <- function(input, output, session) {
         .groups = "drop"
         
       ) |>
-      
-      # Orden natural de las tomas
-      
-      arrange(
-        match(Toma, opciones_tomas)
-      )
+      mutate(
+        Orden_toma = match(Toma, opciones_tomas)
+      ) |>
+      arrange(Orden_toma) |>
+      select(-Orden_toma)
     
   })
   
@@ -739,7 +778,6 @@ server <- function(input, output, session) {
     )
     
     div(
-      
       class = "indicadores-columna",
       
       value_box(
@@ -780,18 +818,13 @@ server <- function(input, output, session) {
     resumen <- Resumen_tomas()
     
     Mapa_tomas <- Tomas_sf |>
-      
       mutate(
         Toma = as.character(Toma)
       ) |>
-      
       left_join(
         resumen,
         by = "Toma"
       )
-    
-    
-    # Completar los valores sin información
     
     Mapa_tomas$Mujeres_encuestadas[
       is.na(Mapa_tomas$Mujeres_encuestadas)
@@ -824,8 +857,6 @@ server <- function(input, output, session) {
     Mapa_tomas$radio <- 5 +
       Mapa_tomas$Mujeres_encuestadas * 0.15
     
-    
-    # Construcción del mapa
     
     leaflet() |>
       
@@ -872,10 +903,12 @@ server <- function(input, output, session) {
       addLegend(
         position = "bottomright",
         colors = c("#F39C12", "#27AE60"),
+        
         labels = c(
           "Toma seleccionada",
           "Otras tomas"
         ),
+        
         title = "Tomas de agua",
         opacity = 1
       ) |>
@@ -890,6 +923,7 @@ server <- function(input, output, session) {
           "Parroquias",
           "Tomas de agua"
         ),
+        
         options = layersControlOptions(
           collapsed = TRUE
         )
@@ -906,9 +940,6 @@ server <- function(input, output, session) {
     
     resumen <- Resumen_tomas()
     
-    
-    # Aplicar el filtro de toma
-    
     if (toma_seleccionada() != "__TODAS__") {
       
       resumen <- resumen |>
@@ -918,7 +949,6 @@ server <- function(input, output, session) {
       
     }
     
-    
     validate(
       need(
         nrow(resumen) > 0,
@@ -927,12 +957,8 @@ server <- function(input, output, session) {
     )
     
     
-    # Calcular porcentajes y colores
-    
     resumen <- resumen |>
-      
       mutate(
-        
         Porcentaje = ifelse(
           Mujeres_encuestadas > 0,
           Mujeres_en_directivas / Mujeres_encuestadas * 100,
@@ -944,9 +970,7 @@ server <- function(input, output, session) {
           "#F39C12",
           "#27AE60"
         )
-        
       )
-    
     
     if (toma_seleccionada() == "__TODAS__") {
       
@@ -955,16 +979,10 @@ server <- function(input, output, session) {
     }
     
     
-    # Construcción del gráfico
-    
     plot_ly(
-      
       data = resumen,
-      
       x = ~Toma,
-      
       y = ~Mujeres_en_directivas,
-      
       type = "bar",
       
       marker = list(
@@ -972,7 +990,6 @@ server <- function(input, output, session) {
       ),
       
       text = ~Mujeres_en_directivas,
-      
       textposition = "outside",
       
       customdata = ~Porcentaje,
@@ -1017,83 +1034,52 @@ server <- function(input, output, session) {
   
   output$grafico_edad <- renderPlotly({
     
-    datos <- Mujeres |>
-      
+    datos <- Mujeres_toma() |>
       filter(
         !is.na(Edad),
         trimws(as.character(Edad)) != ""
       ) |>
-      
       mutate(
         Edad = as.character(Edad),
         Tiene_directiva = es_si(Directiva)
       ) |>
-      
       group_by(Edad) |>
-      
       summarise(
-        
         Mujeres_encuestadas = n(),
-        
         Mujeres_en_directivas = sum(
           Tiene_directiva,
           na.rm = TRUE
         ),
-        
-        Porcentaje = ifelse(
-          n() > 0,
-          sum(Tiene_directiva, na.rm = TRUE) / n() * 100,
-          0
-        ),
-        
         .groups = "drop"
-        
       ) |>
-      
       arrange(Edad)
-    
     
     validate(
       need(
         nrow(datos) > 0,
-        "No existen datos para representar la participación por edad."
+        "No existen datos para representar la participación por edad en la toma seleccionada."
       )
     )
     
-    
-    # Construcción del gráfico
-    
     plot_ly(
-      
       data = datos,
-      
       x = ~Edad,
-      
-      y = ~Porcentaje,
-      
+      y = ~Mujeres_en_directivas,
       type = "bar",
       
       marker = list(
         color = "#3498DB"
       ),
       
-      text = ~paste0(
-        round(Porcentaje, 1),
-        "%"
-      ),
-      
+      text = ~Mujeres_en_directivas,
       textposition = "outside",
       
-      customdata = ~cbind(
-        Mujeres_encuestadas,
-        Mujeres_en_directivas
-      ),
+      customdata = ~Mujeres_encuestadas,
       
       hovertemplate = paste(
         "<b>Grupo de edad:</b> %{x}",
-        "<br><b>Porcentaje en directivas:</b> %{y:.1f}%",
-        "<br><b>Mujeres encuestadas:</b> %{customdata[0]}",
-        "<br><b>Mujeres en directivas:</b> %{customdata[1]}",
+        "<br><b>Mujeres en directivas:</b> %{y}",
+        "<br><b>Mujeres encuestadas:</b> %{customdata}",
         "<extra></extra>"
       )
       
@@ -1108,18 +1094,16 @@ server <- function(input, output, session) {
         ),
         
         yaxis = list(
-          title = "Mujeres en directivas (%)",
+          title = "Número de mujeres en directivas",
           rangemode = "tozero",
-          range = c(0, 110)
+          dtick = 1
         ),
         
-        font = list(
-          size = 11
-        ),
+        font = list(size = 11),
         
         margin = list(
           b = 80,
-          l = 55,
+          l = 65,
           r = 25,
           t = 25
         )
@@ -1131,13 +1115,11 @@ server <- function(input, output, session) {
   
   # ----------------------------------------------------------
   # 4.10. GRÁFICO DE FACTORES LIMITANTES
-  # FILTRO INDEPENDIENTE DE LAS TOMAS Y DEL MAPA
   # ----------------------------------------------------------
   
   output$grafico_factores <- renderPlotly({
     
     datos <- Mujeres_analisis()
-    
     
     validate(
       need(
@@ -1147,31 +1129,23 @@ server <- function(input, output, session) {
     )
     
     
-    # Separar las respuestas cuando una persona registró
-    # más de un factor limitante
-    
     factores <- datos |>
-      
       filter(
         !is.na(Factores_limintan_participación_mujeres),
         trimws(Factores_limintan_participación_mujeres) != ""
       ) |>
-      
       select(
         Factores_limintan_participación_mujeres
       ) |>
-      
       separate_rows(
         Factores_limintan_participación_mujeres,
         sep = ","
       ) |>
-      
       mutate(
         Factor = str_trim(
           Factores_limintan_participación_mujeres
         )
       ) |>
-      
       filter(
         Factor != "",
         !str_detect(
@@ -1182,7 +1156,6 @@ server <- function(input, output, session) {
           )
         )
       ) |>
-      
       count(
         Factor,
         sort = TRUE
@@ -1197,10 +1170,7 @@ server <- function(input, output, session) {
     )
     
     
-    # Construcción del gráfico horizontal
-    
     plot_ly(
-      
       data = factores,
       
       x = ~n,
@@ -1259,13 +1229,29 @@ server <- function(input, output, session) {
   
   output$tabla_resumen <- renderDT({
     
-    resumen <- Resumen_tomas() |>
+    resumen_completo <- Resumen_tomas()
+    
+    if (toma_seleccionada() != "__TODAS__") {
       
+      resumen_completo <- resumen_completo |>
+        filter(
+          Toma == toma_seleccionada()
+        )
+      
+    }
+    
+    validate(
+      need(
+        nrow(resumen_completo) > 0,
+        "No existen registros para la toma seleccionada."
+      )
+    )
+    
+    resumen <- resumen_completo |>
       rename(
         `Toma de agua` = Toma,
         `Mujeres encuestadas` = Mujeres_encuestadas,
         `Mujeres en las directivas` = Mujeres_en_directivas,
-        `Edad (categorías registradas)` = Edad,
         `Cargo que ocupa` = Cargo_que_ocupa
       )
     
