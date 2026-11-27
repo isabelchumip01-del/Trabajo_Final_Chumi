@@ -1,33 +1,28 @@
 # ============================================================
-# PROYECTO FINAL: MUJERES Y GOBERNANZA DEL AGUA
+# APLICACIÓN SHINY
+# Mujeres y gobernanza del agua
 # Junta de Riego y Drenaje Machángara - Ecuador
-#
-# Aplicación Shiny
-# Autora: Isabel Chumi
-#
-# Fuente de datos: repositorio público de GitHub
 # ============================================================
 
-# ============================================================
-# 1. CARGA DE PAQUETES
-# ============================================================
+
+# 1. PAQUETES -------------------------------------------------
 
 library(shiny)
 library(bslib)
+library(bsicons)
 library(readr)
 library(dplyr)
 library(sf)
 library(DT)
 library(plotly)
 library(leaflet)
+library(tidyr)
+library(stringr)
 
-# ============================================================
-# 2. CARGA Y PREPARACIÓN DE DATOS
-# ============================================================
 
-# ------------------------------------------------------------
+# 2. DESCARGA Y PREPARACIÓN DE DATOS --------------------------
+
 # 2.1. Direcciones de los archivos en GitHub
-# ------------------------------------------------------------
 
 url_datos <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Final_Chumi/main/Datos_Limpios_Machangara.csv"
 
@@ -35,286 +30,535 @@ url_cuenca <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Fina
 
 url_parroquias <- "https://raw.githubusercontent.com/isabelchumip01-del/Trabajo_Final_Chumi/main/parroquias_cuenca.gpkg"
 
-# ------------------------------------------------------------
-# 2.2. Lectura de la matriz de encuestas
-# ------------------------------------------------------------
 
-Datos <- readr::read_csv(
+# 2.2. Lectura de la matriz de encuestas
+
+Datos <- read_csv(
   url_datos,
   show_col_types = FALSE
 )
 
-# ------------------------------------------------------------
-# 2.3. Descarga y lectura de las capas geográficas
-# ------------------------------------------------------------
 
-# Se descargan los GeoPackage en archivos temporales.
-# Esto permite leerlos con sf sin utilizar rutas locales.
+# 2.3. Descarga de las capas geográficas
 
 archivo_cuenca <- tempfile(fileext = ".gpkg")
 archivo_parroquias <- tempfile(fileext = ".gpkg")
 
-utils::download.file(
+download.file(
   url_cuenca,
-  destfile = archivo_cuenca,
+  archivo_cuenca,
   mode = "wb",
-  method = "libcurl",
   quiet = TRUE
 )
 
-utils::download.file(
+download.file(
   url_parroquias,
-  destfile = archivo_parroquias,
+  archivo_parroquias,
   mode = "wb",
-  method = "libcurl",
   quiet = TRUE
 )
 
-# Lectura de las capas
 
-Cuenca <- sf::st_read(
+# 2.4. Lectura de las capas espaciales
+
+Cuenca <- st_read(
   archivo_cuenca,
   quiet = TRUE
 )
 
-Parroquias <- sf::st_read(
+Parroquias <- st_read(
   archivo_parroquias,
   quiet = TRUE
 )
 
-# ------------------------------------------------------------
-# 2.4. Conversión de las encuestas en objetos espaciales
-# ------------------------------------------------------------
 
-# Se crean puntos a partir de las coordenadas de cada encuesta.
-# El sistema de referencia original es WGS 84 / UTM zona 17S
-# (EPSG:32717).
+# 2.5. Transformación a WGS84 para Leaflet
 
-Encuestas_sf <- Datos |>
-  sf::st_as_sf(
-    coords = c("Coordenadas X", "Coordenadas Y"),
-    crs = 32717,
-    remove = FALSE
-  )
+Cuenca <- st_transform(Cuenca, 4326)
+Parroquias <- st_transform(Parroquias, 4326)
 
-# ------------------------------------------------------------
-# 2.5. Identificación de las tomas de agua
-# ------------------------------------------------------------
 
-# Se conservan las ubicaciones únicas de las tomas.
+# 2.6. Selección de las mujeres encuestadas
+
+Mujeres <- Datos |>
+  filter(Sexo == "Femenino")
+
+
+# 2.7. Creación de la capa espacial de encuestas
+
+Encuestas_sf <- st_as_sf(
+  Datos,
+  coords = c("Coordenadas X", "Coordenadas Y"),
+  crs = 32717,
+  remove = FALSE
+)
+
+Encuestas_sf <- st_transform(
+  Encuestas_sf,
+  4326
+)
+
+
+# 2.8. Identificación de las tomas de agua
 
 Tomas_sf <- Datos |>
-  dplyr::distinct(
+  distinct(
     Toma,
     `Coordenadas X`,
     `Coordenadas Y`
   ) |>
-  sf::st_as_sf(
+  st_as_sf(
     coords = c("Coordenadas X", "Coordenadas Y"),
     crs = 32717,
     remove = FALSE
   )
 
-# ------------------------------------------------------------
-# 2.6. Transformación al sistema de referencia WGS 84
-# ------------------------------------------------------------
-# Se transforma la información espacial a EPSG:4326,
-# requerido para su visualización en Leaflet.
-
-Encuestas_sf <- sf::st_transform(
-  Encuestas_sf,
-  crs = 4326
-)
-
-Tomas_sf <- sf::st_transform(
+Tomas_sf <- st_transform(
   Tomas_sf,
-  crs = 4326
+  4326
 )
 
-Cuenca <- sf::st_transform(
-  Cuenca,
-  crs = 4326
-)
 
-Parroquias <- sf::st_transform(
-  Parroquias,
-  crs = 4326
-)
+# 2.9. Función para ordenar las tomas de forma natural
 
-# ------------------------------------------------------------
-# 2.7. Comprobación de la preparación de los datos
-# ------------------------------------------------------------
-
-cat("Preparación de datos completada.\n")
-cat("Encuestas:", nrow(Datos), "\n")
-cat("Puntos de encuestas:", nrow(Encuestas_sf), "\n")
-cat("Tomas identificadas:", nrow(Tomas_sf), "\n")
-cat("Cuenca:", nrow(Cuenca), "polígono(s)\n")
-cat("Parroquias:", nrow(Parroquias), "\n")
-
-# ============================================================
-# 3. CONSTRUCCIÓN DE LISTAS DE OPCIONES PARA LOS FILTROS
-# ============================================================
-
-# ------------------------------------------------------------
-# 3.1. Opciones para el filtro de sexo
-# ------------------------------------------------------------
-opciones_sexo <- c(
-  "Todos",
-  sort(unique(stats::na.omit(Datos$Sexo)))
-)
-
-# ------------------------------------------------------------
-# 3.2. Opciones para el filtro de toma
-# ------------------------------------------------------------
-opciones_toma <- c(
-  "Todas",
-  sort(unique(stats::na.omit(as.character(Datos$Toma))))
-)
-
-# ============================================================
-# 4. CONSTRUCCIÓN DE LA INTERFAZ DE USUARIO (UI)
-# ============================================================
-
-ui <- bslib::page_sidebar(
+ordenar_tomas <- function(x) {
   
-  title = "Mujeres y gobernanza del agua",
+  x <- unique(as.character(x))
   
-  theme = bslib::bs_theme(
-    version = 5,
-    bootswatch = "flatly"
-  ),
+  x <- x[
+    !is.na(x) &
+      trimws(x) != ""
+  ]
   
-# ----------------------------------------------------------
-# 4.1. Panel lateral: filtros
-# ----------------------------------------------------------
-sidebar = bslib::sidebar(
-    
- title = "Filtros de consulta",
-    
-  selectInput(
-      inputId = "sexo",
-      label = "Sexo de las personas encuestadas:",
-      choices = opciones_sexo,
-      selected = "Todos"
-    ),
-    
-  selectInput(
-      inputId = "toma",
-      label = "Toma de agua:",
-      choices = opciones_toma,
-      selected = "Todas"
-    ),
-    
-  hr(),
-    
-  p(
-      "Seleccione una o ambas opciones para explorar
-      la información de las encuestas."
+  # Extraer el componente numérico de cada toma
+  
+  numero <- suppressWarnings(
+    as.numeric(
+      str_extract(x, "\\d+")
     )
-  ),
+  )
   
-# ----------------------------------------------------------
-# 4.2. Indicadores principales
-# ----------------------------------------------------------
+  # Extraer las letras o sufijos de cada toma
   
-  uiOutput("resumen"),
+  sufijo <- str_to_upper(
+    str_trim(
+      str_remove(x, "\\d+")
+    )
+  )
   
-# ----------------------------------------------------------
-# 4.3. Gráfico y mapa
-# ----------------------------------------------------------
+  # Ordenar primero por número y después por letra
   
-  bslib::layout_columns(
-    
-    bslib::card(
-      bslib::card_header(
-        "Participación en la directiva según sexo"
-      ),
-      plotlyOutput("grafico_directiva", height = "350px")
-    ),
-    
-    bslib::card(
-      bslib::card_header(
-        "Distribución espacial de las personas encuestadas"
-      ),
-      leafletOutput("mapa_encuestas", height = "350px")
-    ),
-    
-    col_widths = c(6, 6)
-  ),
-  
-# ----------------------------------------------------------
-# 4.4. Tabla de información
-# ----------------------------------------------------------
-  
-  bslib::card(
-    bslib::card_header(
-      "Registros de las personas encuestadas"
-    ),
-    DTOutput("tabla_encuestas")
-  ),
-  
-# ----------------------------------------------------------
-# 4.5. Fuentes de información
-# ----------------------------------------------------------
-  
-  bslib::card(
-    bslib::card_header("Fuentes de información"),
-    p(
-      "Encuestas del estudio: Factores que inciden en la
-      representatividad de las mujeres para la toma de
-      decisiones en la gestión del recurso hídrico."
-    ),
-    p(
-      "Capas geográficas: cuenca del río Machángara y
-      parroquias del área de estudio."
-    ),
-    p(
-      "Repositorio de datos: ",
-      a(
-        "GitHub - Trabajo_Final_Chumi",
-        href = "https://github.com/isabelchumip01-del/Trabajo_Final_Chumi",
-        target = "_blank"
-      )
+  x[
+    order(
+      is.na(numero),
+      numero,
+      sufijo,
+      x,
+      na.last = TRUE
+    )
+  ]
+}
+
+
+# 2.10. Opciones de los filtros
+
+opciones_tomas <- ordenar_tomas(Datos$Toma)
+
+opciones_edad <- sort(
+  unique(
+    as.character(
+      na.omit(Mujeres$Edad)
+    )
+  )
+)
+
+opciones_educacion <- sort(
+  unique(
+    as.character(
+      na.omit(Mujeres$Educación)
     )
   )
 )
 
 
-# ============================================================
-# 5. CONSTRUCCIÓN DEL SERVIDOR (SERVER)
-# ============================================================
+# 2.11. Funciones auxiliares
+
+es_si <- function(x) {
+  
+  !is.na(x) &
+    str_to_lower(
+      str_trim(as.character(x))
+    ) %in%
+    c("sí", "si", "1", "verdadero", "true")
+  
+}
+
+
+# 3. INTERFAZ DE LA APLICACIÓN -------------------------------
+
+ui <- page_fluid(
+  
+  title = "Mujeres y gobernanza del agua",
+  
+  theme = bs_theme(
+    version = 5,
+    bootswatch = "flatly"
+  ),
+  
+  tags$head(
+    
+    tags$style(HTML("
+
+      body {
+        background-color: #F7F9FA;
+      }
+
+      .panel-superior {
+        min-height: 570px;
+      }
+
+      .panel-mapa {
+        min-width: 0;
+      }
+
+      .indicadores-columna {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .indicadores-columna .bslib-value-box {
+        min-height: 125px;
+      }
+
+      .grafico-principal {
+        min-height: 390px;
+      }
+
+      .grafico-secundario {
+        min-height: 390px;
+      }
+
+      .fila-analisis {
+        display: grid;
+        grid-template-columns: 25fr 75fr;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .fila-analisis > * {
+        min-width: 0;
+      }
+
+      @media (max-width: 900px) {
+
+        .fila-analisis {
+          grid-template-columns: 1fr;
+        }
+
+        .panel-superior {
+          min-height: auto;
+        }
+
+      }
+
+    "))
+    
+  ),
+  
+  
+  # ----------------------------------------------------------
+  # SECCIÓN 1. FILTRO DE TOMAS, MAPA E INDICADORES
+  # ----------------------------------------------------------
+  
+  layout_columns(
+    
+    col_widths = c(3, 6, 3),
+    
+    gap = "1rem",
+    
+    
+    # FILTRO DE TOMAS
+    
+    card(
+      
+      class = "panel-superior",
+      
+      card_header(
+        "Distribución espacial de las tomas de agua"
+      ),
+      
+      card_body(
+        
+        selectInput(
+          inputId = "toma",
+          label = "Seleccione una toma de agua:",
+          choices = c(
+            "Todas las tomas" = "__TODAS__",
+            setNames(opciones_tomas, opciones_tomas)
+          ),
+          selected = "__TODAS__"
+        ),
+        
+        hr(),
+        
+        uiOutput("nombre_toma")
+        
+      )
+      
+    ),
+    
+    
+    # MAPA
+    
+    card(
+      
+      class = "panel-superior panel-mapa",
+      
+      card_header(
+        "Ubicación espacial de las tomas"
+      ),
+      
+      leafletOutput(
+        "mapa_tomas",
+        height = "520px",
+        width = "100%"
+      )
+      
+    ),
+    
+    
+    # INDICADORES
+    
+    uiOutput("indicadores")
+    
+  ),
+  
+  
+  # ----------------------------------------------------------
+  # SECCIÓN 2. PARTICIPACIÓN EN DIRECTIVAS
+  # ----------------------------------------------------------
+  
+  layout_columns(
+    
+    col_widths = c(6, 6),
+    
+    gap = "1rem",
+    
+    
+    # PARTICIPACIÓN POR TOMA
+    
+    card(
+      
+      class = "grafico-principal",
+      
+      full_screen = TRUE,
+      
+      card_header(
+        "Participación de las mujeres en directivas por toma"
+      ),
+      
+      plotlyOutput(
+        "grafico_cargos",
+        height = "350px"
+      )
+      
+    ),
+    
+    
+    # PARTICIPACIÓN SEGÚN GRUPO DE EDAD
+    
+    card(
+      
+      class = "grafico-principal",
+      
+      full_screen = TRUE,
+      
+      card_header(
+        "Participación de las mujeres en directivas según grupo de edad"
+      ),
+      
+      plotlyOutput(
+        "grafico_edad",
+        height = "350px"
+      )
+      
+    )
+    
+  ),
+  
+  
+  # ----------------------------------------------------------
+  # SECCIÓN 3. ANÁLISIS DE FACTORES
+  # FILTROS INDEPENDIENTES DEL MAPA Y LAS TOMAS
+  # ----------------------------------------------------------
+  
+  div(
+    
+    class = "fila-analisis",
+    
+    
+    # FILTROS DE ANÁLISIS
+    
+    card(
+      
+      class = "filtros-analisis",
+      
+      card_header(
+        "Filtros de análisis"
+      ),
+      
+      card_body(
+        
+        p(
+          "Explore la relación entre la edad, el nivel educativo y los factores que limitan la participación de las mujeres."
+        ),
+        
+        selectInput(
+          inputId = "edad_analisis",
+          label = "Grupo de edad:",
+          choices = c(
+            "Todas las edades",
+            opciones_edad
+          ),
+          selected = "Todas las edades"
+        ),
+        
+        hr(),
+        
+        selectInput(
+          inputId = "educacion_analisis",
+          label = "Nivel educativo:",
+          choices = c(
+            "Todos los niveles",
+            opciones_educacion
+          ),
+          selected = "Todos los niveles"
+        )
+        
+      )
+      
+    ),
+    
+    
+    # FACTORES LIMITANTES
+    
+    card(
+      
+      class = "grafico-analisis",
+      
+      full_screen = TRUE,
+      
+      card_header(
+        "Factores que limitan la participación de las mujeres"
+      ),
+      
+      plotlyOutput(
+        "grafico_factores",
+        height = "440px"
+      )
+      
+    )
+    
+  ),
+  
+  
+  # ----------------------------------------------------------
+  # SECCIÓN 4. TABLA RESUMEN
+  # ----------------------------------------------------------
+  
+  card(
+    
+    full_screen = TRUE,
+    
+    card_header(
+      "Resumen de participación de las mujeres por toma de agua"
+    ),
+    
+    DTOutput("tabla_resumen")
+    
+  ),
+  
+  
+  # ----------------------------------------------------------
+  # FUENTES DE INFORMACIÓN
+  # ----------------------------------------------------------
+  
+  card(
+    
+    card_header(
+      "Fuente de información"
+    ),
+    
+    p(
+      "Elaboración propia con base en la encuesta aplicada a usuarios y usuarias de la Junta de Riego y Drenaje Machángara."
+    ),
+    
+    p(
+      a(
+        "Consultar repositorio de datos en GitHub",
+        href = "https://github.com/isabelchumip01-del/Trabajo_Final_Chumi",
+        target = "_blank"
+      )
+    )
+    
+  )
+  
+)
+
+
+# 4. SERVIDOR -------------------------------------------------
 
 server <- function(input, output, session) {
   
   
   # ----------------------------------------------------------
-  # 5.1. Expresión reactiva para filtrar los datos
+  # 4.1. TOMA SELECCIONADA
   # ----------------------------------------------------------
   
-  # Los filtros seleccionados se aplican a la matriz de
-  # encuestas. Los resultados alimentan todos los elementos
-  # de la aplicación.
+  toma_seleccionada <- reactive({
+    
+    req(input$toma)
+    
+    input$toma
+    
+  })
   
-  Datos_filtrados <- reactive({
+  
+  # ----------------------------------------------------------
+  # 4.2. FILTRO INDEPENDIENTE PARA EL ANÁLISIS
+  # ----------------------------------------------------------
+  
+  Mujeres_analisis <- reactive({
     
-    resultado <- Datos
+    resultado <- Mujeres
     
-    # Filtro por sexo
+    # Filtro por edad
     
-    if (input$sexo != "Todos") {
+    if (
+      !is.null(input$edad_analisis) &&
+      input$edad_analisis != "Todas las edades"
+    ) {
       
       resultado <- resultado |>
-        dplyr::filter(Sexo == input$sexo)
+        filter(
+          as.character(Edad) == input$edad_analisis
+        )
       
     }
     
-    # Filtro por toma de agua
     
-    if (input$toma != "Todas") {
+    # Filtro por nivel educativo
+    
+    if (
+      !is.null(input$educacion_analisis) &&
+      input$educacion_analisis != "Todos los niveles"
+    ) {
       
       resultado <- resultado |>
-        dplyr::filter(as.character(Toma) == input$toma)
+        filter(
+          as.character(Educación) == input$educacion_analisis
+        )
       
     }
     
@@ -324,244 +568,730 @@ server <- function(input, output, session) {
   
   
   # ----------------------------------------------------------
-  # 5.2. Indicadores principales
+  # 4.3. MUJERES SEGÚN LA TOMA SELECCIONADA
   # ----------------------------------------------------------
   
-  output$resumen <- renderUI({
+  Mujeres_toma <- reactive({
     
-    datos <- Datos_filtrados()
-    
-    total_personas <- nrow(datos)
-    
-    total_mujeres <- sum(
-      datos$Sexo == "Femenino",
-      na.rm = TRUE
-    )
-    
-    total_directiva <- sum(
-      datos$Directiva == "Sí",
-      na.rm = TRUE
-    )
-    
-    bslib::layout_columns(
+    if (toma_seleccionada() == "__TODAS__") {
       
-      bslib::value_box(
-        title = "Personas encuestadas",
-        value = total_personas,
-        showcase = bsicons::bs_icon("people")
-      ),
+      Mujeres
       
-      bslib::value_box(
-        title = "Mujeres encuestadas",
-        value = total_mujeres,
-        showcase = bsicons::bs_icon("person")
-      ),
+    } else {
       
-      bslib::value_box(
-        title = "Personas que pertenecen a una directiva",
-        value = total_directiva,
-        showcase = bsicons::bs_icon("person-check")
-      ),
+      Mujeres |>
+        filter(
+          as.character(Toma) == toma_seleccionada()
+        )
       
-      col_widths = c(4, 4, 4)
-      
-    )
+    }
     
   })
   
   
   # ----------------------------------------------------------
-  # 5.3. Gráfico de participación en las directivas
+  # 4.4. RESUMEN DE PARTICIPACIÓN POR TOMA
   # ----------------------------------------------------------
   
-  output$grafico_directiva <- renderPlotly({
+  Resumen_tomas <- reactive({
     
-    datos <- Datos_filtrados()
-    
-    # Se excluyen los registros sin información en las
-    # variables necesarias para este gráfico.
-    
-    datos_grafico <- datos |>
-      dplyr::filter(
-        !is.na(Sexo),
-        !is.na(Directiva)
+    Mujeres |>
+      
+      mutate(
+        
+        Toma = as.character(Toma),
+        
+        Tiene_directiva = es_si(Directiva),
+        
+        Cargo_limpio = ifelse(
+          is.na(Cargo_que_ocupa) |
+            trimws(as.character(Cargo_que_ocupa)) == "",
+          NA_character_,
+          trimws(as.character(Cargo_que_ocupa))
+        )
+        
       ) |>
-      dplyr::count(
-        Sexo,
-        Directiva,
-        name = "Personas"
+      
+      group_by(Toma) |>
+      
+      summarise(
+        
+        # Número de mujeres encuestadas por toma
+        
+        Mujeres_encuestadas = n(),
+        
+        
+        # Número de mujeres que pertenecen a directivas
+        
+        Mujeres_en_directivas = sum(
+          Tiene_directiva,
+          na.rm = TRUE
+        ),
+        
+        
+        # Categorías de edad registradas por toma
+        
+        Edad = {
+          
+          edades <- unique(
+            trimws(
+              as.character(
+                Edad[
+                  !is.na(Edad) &
+                    trimws(as.character(Edad)) != ""
+                ]
+              )
+            )
+          )
+          
+          if (length(edades) == 0) {
+            
+            "Sin dato"
+            
+          } else {
+            
+            paste(
+              sort(edades),
+              collapse = "; "
+            )
+            
+          }
+          
+        },
+        
+        
+        # Cargos reportados por las mujeres en directivas
+        
+        Cargo_que_ocupa = {
+          
+          cargos <- unique(
+            Cargo_limpio[
+              Tiene_directiva &
+                !is.na(Cargo_limpio)
+            ]
+          )
+          
+          if (length(cargos) == 0) {
+            
+            "Sin cargos reportados"
+            
+          } else {
+            
+            paste(
+              sort(cargos),
+              collapse = "; "
+            )
+            
+          }
+          
+        },
+        
+        .groups = "drop"
+        
+      ) |>
+      
+      # Orden natural de las tomas
+      
+      arrange(
+        match(Toma, opciones_tomas)
       )
     
-    validate(
-      need(
-        nrow(datos_grafico) > 0,
-        "No existen registros disponibles para esta combinación de filtros."
-      )
-    )
+  })
+  
+  
+  # ----------------------------------------------------------
+  # 4.5. NOMBRE DE LA TOMA SELECCIONADA
+  # ----------------------------------------------------------
+  
+  output$nombre_toma <- renderUI({
     
-    plotly::plot_ly(
-      data = datos_grafico,
-      x = ~Sexo,
-      y = ~Personas,
-      color = ~Directiva,
-      type = "bar",
-      text = ~Personas,
-      textposition = "auto"
-    ) |>
-      plotly::layout(
-        barmode = "group",
-        xaxis = list(
-          title = "Sexo"
-        ),
-        yaxis = list(
-          title = "Número de personas"
-        ),
-        legend = list(
-          title = list(text = "Pertenece a la directiva")
+    if (toma_seleccionada() == "__TODAS__") {
+      
+      h5("Se muestran todas las tomas de agua.")
+      
+    } else {
+      
+      h5(
+        paste(
+          "Toma seleccionada:",
+          toma_seleccionada()
         )
       )
+      
+    }
     
   })
   
   
   # ----------------------------------------------------------
-  # 5.4. Mapa de distribución espacial
+  # 4.6. INDICADORES SUPERIORES
   # ----------------------------------------------------------
   
-  output$mapa_encuestas <- renderLeaflet({
+  output$indicadores <- renderUI({
     
-    datos <- Datos_filtrados()
+    datos <- Mujeres_toma()
     
-    validate(
-      need(
-        nrow(datos) > 0,
-        "No existen registros para representar en el mapa."
-      )
+    numero_mujeres <- nrow(datos)
+    
+    numero_directivas <- sum(
+      es_si(datos$Directiva),
+      na.rm = TRUE
     )
     
-    # Se calcula el número de personas encuestadas
-    # en cada toma de agua.
-    
-    Resumen_tomas <- datos |>
-      dplyr::count(
-        Toma,
-        name = "Personas"
+    div(
+      
+      class = "indicadores-columna",
+      
+      value_box(
+        
+        title = "Mujeres encuestadas",
+        
+        value = numero_mujeres,
+        
+        showcase = bs_icon("people-fill"),
+        
+        theme = "primary"
+        
+      ),
+      
+      value_box(
+        
+        title = "Mujeres que pertenecen a directivas",
+        
+        value = numero_directivas,
+        
+        showcase = bs_icon("person-badge-fill"),
+        
+        theme = "success"
+        
       )
+      
+    )
     
-    # Se relacionan los conteos con las ubicaciones
-    # geográficas de las tomas.
+  })
+  
+  
+  # ----------------------------------------------------------
+  # 4.7. MAPA DE TOMAS DE AGUA
+  # ----------------------------------------------------------
+  
+  output$mapa_tomas <- renderLeaflet({
+    
+    resumen <- Resumen_tomas()
     
     Mapa_tomas <- Tomas_sf |>
-      dplyr::left_join(
-        Resumen_tomas,
+      
+      mutate(
+        Toma = as.character(Toma)
+      ) |>
+      
+      left_join(
+        resumen,
         by = "Toma"
-      ) |>
-      dplyr::filter(!is.na(Personas))
-    
-    validate(
-      need(
-        nrow(Mapa_tomas) > 0,
-        "No hay ubicaciones disponibles para mostrar."
       )
-    )
     
-    # Se obtiene la extensión geográfica de la cuenca.
     
-    limites <- sf::st_bbox(Cuenca)
+    # Completar los valores sin información
     
-    # Construcción del mapa.
+    Mapa_tomas$Mujeres_encuestadas[
+      is.na(Mapa_tomas$Mujeres_encuestadas)
+    ] <- 0
     
-    leaflet::leaflet() |>
+    Mapa_tomas$Mujeres_en_directivas[
+      is.na(Mapa_tomas$Mujeres_en_directivas)
+    ] <- 0
+    
+    
+    # Resaltar la toma seleccionada
+    
+    if (toma_seleccionada() == "__TODAS__") {
       
-      leaflet::addProviderTiles(
-        providers$CartoDB.Positron
+      Mapa_tomas$color <- "#27AE60"
+      
+    } else {
+      
+      Mapa_tomas$color <- ifelse(
+        Mapa_tomas$Toma == toma_seleccionada(),
+        "#F39C12",
+        "#27AE60"
+      )
+      
+    }
+    
+    
+    # Tamaño de los puntos según mujeres encuestadas
+    
+    Mapa_tomas$radio <- 5 +
+      Mapa_tomas$Mujeres_encuestadas * 0.15
+    
+    
+    # Construcción del mapa
+    
+    leaflet() |>
+      
+      addProviderTiles(
+        providers$OpenStreetMap.Mapnik
       ) |>
       
-      leaflet::addPolygons(
-        data = Parroquias,
-        fillColor = "#DDE8E5",
-        fillOpacity = 0.25,
-        color = "#879B91",
-        weight = 1,
-        group = "Parroquias"
-      ) |>
-      
-      leaflet::addPolygons(
+      addPolygons(
         data = Cuenca,
-        fill = FALSE,
-        color = "#176B52",
-        weight = 3,
+        color = "#34495E",
+        weight = 2,
+        fillOpacity = 0.05,
         group = "Cuenca"
       ) |>
       
-      leaflet::addCircleMarkers(
-        data = Mapa_tomas,
-        radius = ~pmax(5, sqrt(Personas) * 3),
-        color = "#176B52",
-        fillColor = "#43A58A",
-        fillOpacity = 0.8,
+      addPolygons(
+        data = Parroquias,
+        color = "#7F8C8D",
         weight = 1,
-        popup = ~paste0(
-          "<strong>Toma: </strong>", Toma,
-          "<br><strong>Personas encuestadas: </strong>",
-          Personas
-        )
+        fillOpacity = 0.05,
+        group = "Parroquias"
       ) |>
       
-      leaflet::fitBounds(
-        lng1 = limites[["xmin"]],
-        lat1 = limites[["ymin"]],
-        lng2 = limites[["xmax"]],
-        lat2 = limites[["ymax"]]
+      addCircleMarkers(
+        data = Mapa_tomas,
+        radius = Mapa_tomas$radio,
+        color = Mapa_tomas$color,
+        fillColor = Mapa_tomas$color,
+        fillOpacity = 0.85,
+        weight = 2,
+        
+        popup = paste0(
+          "<b>Toma:</b> ",
+          Mapa_tomas$Toma,
+          "<br><b>Mujeres encuestadas:</b> ",
+          Mapa_tomas$Mujeres_encuestadas,
+          "<br><b>Mujeres en directivas:</b> ",
+          Mapa_tomas$Mujeres_en_directivas
+        ),
+        
+        group = "Tomas de agua"
+      ) |>
+      
+      addLegend(
+        position = "bottomright",
+        colors = c("#F39C12", "#27AE60"),
+        labels = c(
+          "Toma seleccionada",
+          "Otras tomas"
+        ),
+        title = "Tomas de agua",
+        opacity = 1
+      ) |>
+      
+      addScaleBar(
+        position = "bottomleft"
+      ) |>
+      
+      addLayersControl(
+        overlayGroups = c(
+          "Cuenca",
+          "Parroquias",
+          "Tomas de agua"
+        ),
+        options = layersControlOptions(
+          collapsed = TRUE
+        )
       )
     
   })
   
   
   # ----------------------------------------------------------
-  # 5.5. Tabla de registros
+  # 4.8. GRÁFICO DE PARTICIPACIÓN POR TOMA
   # ----------------------------------------------------------
   
-  output$tabla_encuestas <- DT::renderDT({
+  output$grafico_cargos <- renderPlotly({
     
-    datos <- Datos_filtrados()
+    resumen <- Resumen_tomas()
+    
+    
+    # Aplicar el filtro de toma
+    
+    if (toma_seleccionada() != "__TODAS__") {
+      
+      resumen <- resumen |>
+        filter(
+          Toma == toma_seleccionada()
+        )
+      
+    }
+    
+    
+    validate(
+      need(
+        nrow(resumen) > 0,
+        "No existen datos para la toma seleccionada."
+      )
+    )
+    
+    
+    # Calcular porcentajes y colores
+    
+    resumen <- resumen |>
+      
+      mutate(
+        
+        Porcentaje = ifelse(
+          Mujeres_encuestadas > 0,
+          Mujeres_en_directivas / Mujeres_encuestadas * 100,
+          0
+        ),
+        
+        Color = ifelse(
+          Toma == toma_seleccionada(),
+          "#F39C12",
+          "#27AE60"
+        )
+        
+      )
+    
+    
+    if (toma_seleccionada() == "__TODAS__") {
+      
+      resumen$Color <- "#27AE60"
+      
+    }
+    
+    
+    # Construcción del gráfico
+    
+    plot_ly(
+      
+      data = resumen,
+      
+      x = ~Toma,
+      
+      y = ~Mujeres_en_directivas,
+      
+      type = "bar",
+      
+      marker = list(
+        color = ~Color
+      ),
+      
+      text = ~Mujeres_en_directivas,
+      
+      textposition = "outside",
+      
+      customdata = ~Porcentaje,
+      
+      hovertemplate = paste(
+        "<b>Toma:</b> %{x}",
+        "<br><b>Mujeres en directivas:</b> %{y}",
+        "<br><b>Porcentaje:</b> %{customdata:.1f}%",
+        "<extra></extra>"
+      )
+      
+    ) |>
+      
+      layout(
+        
+        xaxis = list(
+          title = "Toma de agua",
+          categoryorder = "array",
+          categoryarray = opciones_tomas,
+          tickangle = -45,
+          automargin = TRUE
+        ),
+        
+        yaxis = list(
+          title = "Número de mujeres",
+          rangemode = "tozero"
+        ),
+        
+        margin = list(
+          b = 110,
+          t = 30
+        )
+        
+      )
+    
+  })
+  
+  
+  # ----------------------------------------------------------
+  # 4.9. GRÁFICO DE PARTICIPACIÓN SEGÚN GRUPO DE EDAD
+  # ----------------------------------------------------------
+  
+  output$grafico_edad <- renderPlotly({
+    
+    datos <- Mujeres |>
+      
+      filter(
+        !is.na(Edad),
+        trimws(as.character(Edad)) != ""
+      ) |>
+      
+      mutate(
+        Edad = as.character(Edad),
+        Tiene_directiva = es_si(Directiva)
+      ) |>
+      
+      group_by(Edad) |>
+      
+      summarise(
+        
+        Mujeres_encuestadas = n(),
+        
+        Mujeres_en_directivas = sum(
+          Tiene_directiva,
+          na.rm = TRUE
+        ),
+        
+        Porcentaje = ifelse(
+          n() > 0,
+          sum(Tiene_directiva, na.rm = TRUE) / n() * 100,
+          0
+        ),
+        
+        .groups = "drop"
+        
+      ) |>
+      
+      arrange(Edad)
+    
     
     validate(
       need(
         nrow(datos) > 0,
-        "No existen registros para mostrar en la tabla."
+        "No existen datos para representar la participación por edad."
       )
     )
     
-    # Se seleccionan las variables principales para
-    # facilitar la consulta de la información.
     
-    tabla <- datos |>
-      dplyr::select(
-        dplyr::any_of(
-          c(
-            "Toma",
-            "Sexo",
-            "Edad",
-            "Educación",
-            "Actividad",
-            "Directiva",
-            "Cargo_que_ocupa"
+    # Construcción del gráfico
+    
+    plot_ly(
+      
+      data = datos,
+      
+      x = ~Edad,
+      
+      y = ~Porcentaje,
+      
+      type = "bar",
+      
+      marker = list(
+        color = "#3498DB"
+      ),
+      
+      text = ~paste0(
+        round(Porcentaje, 1),
+        "%"
+      ),
+      
+      textposition = "outside",
+      
+      customdata = ~cbind(
+        Mujeres_encuestadas,
+        Mujeres_en_directivas
+      ),
+      
+      hovertemplate = paste(
+        "<b>Grupo de edad:</b> %{x}",
+        "<br><b>Porcentaje en directivas:</b> %{y:.1f}%",
+        "<br><b>Mujeres encuestadas:</b> %{customdata[0]}",
+        "<br><b>Mujeres en directivas:</b> %{customdata[1]}",
+        "<extra></extra>"
+      )
+      
+    ) |>
+      
+      layout(
+        
+        xaxis = list(
+          title = "Grupo de edad",
+          tickangle = -25,
+          automargin = TRUE
+        ),
+        
+        yaxis = list(
+          title = "Mujeres en directivas (%)",
+          rangemode = "tozero",
+          range = c(0, 110)
+        ),
+        
+        font = list(
+          size = 11
+        ),
+        
+        margin = list(
+          b = 80,
+          l = 55,
+          r = 25,
+          t = 25
+        )
+        
+      )
+    
+  })
+  
+  
+  # ----------------------------------------------------------
+  # 4.10. GRÁFICO DE FACTORES LIMITANTES
+  # FILTRO INDEPENDIENTE DE LAS TOMAS Y DEL MAPA
+  # ----------------------------------------------------------
+  
+  output$grafico_factores <- renderPlotly({
+    
+    datos <- Mujeres_analisis()
+    
+    
+    validate(
+      need(
+        nrow(datos) > 0,
+        "No existen mujeres para los filtros seleccionados."
+      )
+    )
+    
+    
+    # Separar las respuestas cuando una persona registró
+    # más de un factor limitante
+    
+    factores <- datos |>
+      
+      filter(
+        !is.na(Factores_limintan_participación_mujeres),
+        trimws(Factores_limintan_participación_mujeres) != ""
+      ) |>
+      
+      select(
+        Factores_limintan_participación_mujeres
+      ) |>
+      
+      separate_rows(
+        Factores_limintan_participación_mujeres,
+        sep = ","
+      ) |>
+      
+      mutate(
+        Factor = str_trim(
+          Factores_limintan_participación_mujeres
+        )
+      ) |>
+      
+      filter(
+        Factor != "",
+        !str_detect(
+          Factor,
+          regex(
+            "^Más mujeres participan",
+            ignore_case = TRUE
           )
         )
+      ) |>
+      
+      count(
+        Factor,
+        sort = TRUE
       )
     
-    DT::datatable(
-      tabla,
-      rownames = FALSE,
-      filter = "top",
-      options = list(
-        pageLength = 10,
-        scrollX = TRUE,
-        language = list(
-          url = "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json"
-        )
+    
+    validate(
+      need(
+        nrow(factores) > 0,
+        "No se registraron factores limitantes para los filtros seleccionados."
       )
+    )
+    
+    
+    # Construcción del gráfico horizontal
+    
+    plot_ly(
+      
+      data = factores,
+      
+      x = ~n,
+      
+      y = ~reorder(Factor, n),
+      
+      type = "bar",
+      
+      orientation = "h",
+      
+      marker = list(
+        color = "#3498DB"
+      ),
+      
+      text = ~n,
+      
+      textposition = "outside",
+      
+      hovertemplate = paste(
+        "<b>Factor:</b> %{y}",
+        "<br><b>Frecuencia:</b> %{x}",
+        "<extra></extra>"
+      )
+      
+    ) |>
+      
+      layout(
+        
+        xaxis = list(
+          title = "Número de respuestas",
+          rangemode = "tozero"
+        ),
+        
+        yaxis = list(
+          title = "",
+          automargin = TRUE
+        ),
+        
+        font = list(
+          size = 10
+        ),
+        
+        margin = list(
+          l = 180,
+          r = 35
+        )
+        
+      )
+    
+  })
+  
+  
+  # ----------------------------------------------------------
+  # 4.11. TABLA RESUMEN POR TOMA
+  # ----------------------------------------------------------
+  
+  output$tabla_resumen <- renderDT({
+    
+    resumen <- Resumen_tomas() |>
+      
+      rename(
+        `Toma de agua` = Toma,
+        `Mujeres encuestadas` = Mujeres_encuestadas,
+        `Mujeres en las directivas` = Mujeres_en_directivas,
+        `Edad (categorías registradas)` = Edad,
+        `Cargo que ocupa` = Cargo_que_ocupa
+      )
+    
+    
+    datatable(
+      
+      resumen,
+      
+      rownames = FALSE,
+      
+      filter = "top",
+      
+      options = list(
+        
+        pageLength = 10,
+        
+        scrollX = TRUE,
+        
+        autoWidth = TRUE,
+        
+        language = list(
+          url = "//cdn.datatables.net/plug-ins/1.13.7/i18n/es-ES.json"
+        )
+        
+      )
+      
     )
     
   })
@@ -569,9 +1299,7 @@ server <- function(input, output, session) {
 }
 
 
-# ============================================================
-# 6. EJECUCIÓN DE LA APLICACIÓN
-# ============================================================
+# 5. EJECUTAR APLICACIÓN -------------------------------------
 
 shinyApp(
   ui = ui,
